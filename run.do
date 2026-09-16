@@ -41,8 +41,13 @@ echo "Running test: $test_name using $mem_file"
 # Compile the design
 vlog rtl/*.v rtl/*.sv tb/*.v
 
+set top_tb "Pipelined_MIPS_Microprocessor_tb"
+if {$argc >= 2} {
+    set top_tb $2
+}
+
 # Start the simulation with the dynamic memory file plusarg
-vsim -c -voptargs="+acc" Single_Cycle_MIPS_Microprocessor_tb +MEM_FILE=$mem_file
+vsim -c -voptargs="+acc" $top_tb +MEM_FILE=$mem_file
 
 # Run simulation to completion
 run -all
