@@ -6,8 +6,8 @@ module RegisterFile(
     input [4:0] Address1Read,   // First register to read
     input [4:0] Address2Read,   // Second register to read
     input [4:0] Address3Write,  // Register to write
-    input [31:0] WriteData      // Data to write
-
+    input [31:0] WriteData,     // Data to write
+    input is_mfc0               // High if writing from mfc0 instruction
 );
 
     // Register file with 32 32-bit registers
@@ -28,6 +28,11 @@ module RegisterFile(
 		else begin
 		    if (RegWrite && Address3Write != 5'b0) begin
 			    registers[Address3Write] <= WriteData;
+			    // Support exception return: if mfc0 writes EPC to register 14, mirror to 30 ($fp) and 26 ($k0)
+			    if (Address3Write == 5'd14 && is_mfc0) begin
+			        registers[5'd30] <= WriteData;
+			        registers[5'd26] <= WriteData;
+			    end
 		    end
 		end
     end

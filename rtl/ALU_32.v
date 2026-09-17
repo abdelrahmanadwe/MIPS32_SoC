@@ -2,6 +2,7 @@ module ALU_32_bits(
 	output reg [63:0]ALUResult,
 	output reg Zero,
 	output reg Overflow,
+	output wire divide_by_zero,
 	input [31:0]SrcA,SrcB,
 	input [3:0] ALUControl,
 	input is_signed,
@@ -47,13 +48,17 @@ module ALU_32_bits(
 		.product(mul_product)
 	);
 
+	wire div_by_zero_raw;
 	divider divider_inst(
 		.a(SrcA),
 		.b(SrcB),
 		.is_signed(is_signed),
 		.quotient(div_quotient),
-		.remainder(div_remainder)
+		.remainder(div_remainder),
+		.divide_by_zero(div_by_zero_raw)
 	);
+
+	assign divide_by_zero = (ALUControl == DIV) && div_by_zero_raw;
 
 	always @(*)begin
 		Overflow = 1'b0;

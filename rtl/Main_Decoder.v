@@ -14,27 +14,36 @@ module MainDecoder(
     output reg hi_write,      // Write enable for special HI register
     output reg lo_write,      // Write enable for special LO register
     output reg [1:0] HILOSrc, // Select HI/LO input source: 00=multiplier, 01=divider, 10=rs (ReadData1)
-	input [5:0] opcode,      // Opcode field from the instruction
-	input [5:0] funct        // Funct field from the instruction (for jr and jalr R-type)
+    output reg cp0_write,     // Write enable for CP0 register (mtc0)
+    output reg is_syscall,    // System call exception flag
+    output reg is_break,      // Breakpoint exception flag
+    output reg is_undefined,  // Undefined instruction exception flag
+	input [5:0] opcode,       // Opcode field from the instruction
+	input [5:0] funct,        // Funct field from the instruction (for jr and jalr R-type)
+    input [4:0] rs            // rs field for CP0 instructions (00000=mfc0, 00100=mtc0)
 );
  
     always @(*) begin
         // Default control signal values to prevent latches
-        Jump        = 2'b00;
-        ALUOp       = 4'b0000;
-        MemWrite    = 1'b0;
-        RegWrite    = 1'b0;
-        RegDst      = 2'b00;
-        ALUSrc      = 1'b0;
-        MemToReg    = 3'b000;
-        Branch      = 1'b0;
-        MemSize     = 2'b10; // Default Word
-        MemUnsigned = 1'b0;  // Default Signed
-        ExtOp       = 2'b01;  // Default Sign-extend
-        Bne         = 1'b0;
-        hi_write    = 1'b0;
-        lo_write    = 1'b0;
-        HILOSrc     = 2'b00;
+        Jump         = 2'b00;
+        ALUOp        = 4'b0000;
+        MemWrite     = 1'b0;
+        RegWrite     = 1'b0;
+        RegDst       = 2'b00;
+        ALUSrc       = 1'b0;
+        MemToReg     = 3'b000;
+        Branch       = 1'b0;
+        MemSize      = 2'b10; // Default Word
+        MemUnsigned  = 1'b0;  // Default Signed
+        ExtOp        = 2'b01;  // Default Sign-extend
+        Bne          = 1'b0;
+        hi_write     = 1'b0;
+        lo_write     = 1'b0;
+        HILOSrc      = 2'b00;
+        cp0_write    = 1'b0;
+        is_syscall   = 1'b0;
+        is_break     = 1'b0;
+        is_undefined = 1'b0;
 
         case(opcode)
             6'b000000: begin // R-type instructions
@@ -90,10 +99,25 @@ module MainDecoder(
                     lo_write = 1'b1;
                     HILOSrc  = 2'b01; // From divider
                 end
-                else begin // Standard R-type
+                else if (funct == 6'b001100) begin // syscall (System Call Exception)
+                    is_syscall = 1'b1;
+                    RegWrite   = 1'b0;
+                end
+                else if (funct == 6'b001101) begin // break (Breakpoint Exception)
+                    is_break   = 1'b1;
+                    RegWrite   = 1'b0;
+                end
+                else if (funct == 6'b100000 || funct == 6'b100001 || funct == 6'b100010 || funct == 6'b100011 || // add, addu, sub, subu
+                         funct == 6'b100100 || funct == 6'b100101 || funct == 6'b100110 || funct == 6'b100111 || // and, or, xor, nor
+                         funct == 6'b101010 || funct == 6'b101011 || // slt, sltu
+                         funct == 6'b000000 || funct == 6'b000010 || funct == 6'b000011 || // sll, srl, sra
+                         funct == 6'b000100 || funct == 6'b000110 || funct == 6'b000111) begin // sllv, srlv, srav
                     ALUOp    = 4'b0010;
                     RegWrite = 1'b1;
                     RegDst   = 2'b01;
+                end
+                else begin
+                    is_undefined = 1'b1;
                 end
             end
             6'b011100: begin // mul (SPECIAL2 opcode)
@@ -215,7 +239,23 @@ module MainDecoder(
                 ALUOp    = 4'b0111;
                 ExtOp    = 2'b10; // Upper Immediate
             end
-            default: ;
+            6'b010000: begin // CP0 instructions (mfc0, mtc0)
+                if (rs == 5'b00000) begin // mfc0 rt, rd: GPR[rt] = CP0[rd]
+                    RegWrite = 1'b1;
+                    RegDst   = 2'b00; // Destination is rt
+                    MemToReg = 3'b101; // Select CP0 read data
+                end
+                else if (rs == 5'b00100) begin // mtc0 rt, rd: CP0[rd] = GPR[rt]
+                    cp0_write = 1'b1;
+                    RegWrite  = 1'b0;
+                end
+                else begin
+                    is_undefined = 1'b1;
+                end
+            end
+            default: begin
+                is_undefined = 1'b1;
+            end
         endcase
     end
 	

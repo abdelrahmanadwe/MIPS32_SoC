@@ -96,7 +96,8 @@ module Hazard_Unit (
     wire branch_stall = branch_stall_ex || branch_stall_mem;
 
     // C. JR Data Hazards (Jump Register evaluated in ID stage)
-    wire jr_stall_ex = (JumpD == 2'b10) && RegWriteE && (WriteRegE != 5'd0) && (WriteRegE == RsD);
+    wire is_mfc0_hazard = (MemToRegE == 3'b101 && WriteRegE == 5'd14 && (RsD == 5'd30 || RsD == 5'd26 || RsD == 5'd14));
+    wire jr_stall_ex = (JumpD == 2'b10) && (((RegWriteE && (WriteRegE != 5'd0) && (WriteRegE == RsD))) || is_mfc0_hazard);
     wire jr_stall_mem = (JumpD == 2'b10) && (MemToRegM == 3'b001) && (WriteRegM != 5'd0) && (WriteRegM == RsD);
     wire jr_stall = jr_stall_ex || jr_stall_mem;
 
@@ -105,10 +106,10 @@ module Hazard_Unit (
     // =========================================================================
     // 4. Control Signals (Stall & Flush)
     // =========================================================================
-    // Control redirects (misprediction or jr taken) take priority over stalling
-    assign StallF = total_stall && !mispred_sel && !jr_sel;
-    assign StallD = total_stall && !mispred_sel && !jr_sel;
-    assign FlushE = (total_stall && !mispred_sel && !jr_sel);
+    // Control redirects (misprediction) take priority over stalling
+    assign StallF = total_stall && !mispred_sel;
+    assign StallD = total_stall && !mispred_sel;
+    assign FlushE = total_stall && !mispred_sel;
     assign FlushD = mispred_sel || jr_sel;
 
 endmodule

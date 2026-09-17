@@ -73,7 +73,8 @@ module Single_Cycle_MIPS_Microprocessor #(
 		.Address1Read(instruction[25:21]), 
 		.Address2Read(instruction[20:16]), 
 		.Address3Write(Address3WriteReg),
-		.WriteData(writeDataReg)  
+		.WriteData(writeDataReg),
+		.is_mfc0(1'b0)
 	);
 
 	Sign_Extand sign_extand(
@@ -141,6 +142,7 @@ module Single_Cycle_MIPS_Microprocessor #(
 		.ALUResult(ALUResult64),
 		.Zero(zero),
 		.Overflow(overflow),
+		.divide_by_zero(),
 		.SrcA(readData1Reg),
 		.SrcB(SrcB),
 		.ALUControl(ALUControl),
@@ -192,8 +194,13 @@ module Single_Cycle_MIPS_Microprocessor #(
 		.hi_write(hi_write),
 		.lo_write(lo_write),
 		.HILOSrc(HILOSrc),
+		.cp0_write(),
+		.is_syscall(),
+		.is_break(),
+		.is_undefined(),
 		.opcode(instruction[31:26]),      
-		.funct(instruction[5:0])    
+		.funct(instruction[5:0]),
+		.rs(instruction[25:21])
 	);
 	
 	Data_Memory #(

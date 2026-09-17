@@ -59,6 +59,7 @@ module ID_EX_reg (
     input  wire        hi_writeD,
     input  wire        lo_writeD,
     input  wire [1:0]  HILOSrcD,
+    input  wire        cp0_writeD,
 
     // Data / Address signals from ID stage
     input  wire [31:0] ReadData1D,
@@ -87,6 +88,7 @@ module ID_EX_reg (
     output reg         hi_writeE,
     output reg         lo_writeE,
     output reg  [1:0]  HILOSrcE,
+    output reg         cp0_writeE,
 
     // Data / Address signals to EX stage
     output reg  [31:0] ReadData1E,
@@ -118,6 +120,7 @@ module ID_EX_reg (
             hi_writeE    <= 1'b0;
             lo_writeE    <= 1'b0;
             HILOSrcE     <= 2'b00;
+            cp0_writeE   <= 1'b0;
 
             ReadData1E   <= 32'b0;
             ReadData2E   <= 32'b0;
@@ -144,6 +147,7 @@ module ID_EX_reg (
             hi_writeE    <= hi_writeD;
             lo_writeE    <= lo_writeD;
             HILOSrcE     <= HILOSrcD;
+            cp0_writeE   <= cp0_writeD;
 
             ReadData1E   <= ReadData1D;
             ReadData2E   <= ReadData2D;

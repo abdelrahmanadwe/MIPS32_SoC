@@ -2,16 +2,19 @@
 module Pipelined_MIPS_Microprocessor_tb();
 
 	reg clock, reset;
+	reg hardware_interrupt;
 	wire [15:0] TestValue;
 	
 	Pipelined_MIPS_Microprocessor MIPS (
 		.TestValue(TestValue),
 		.reset(reset),
-		.clock(clock)
+		.clock(clock),
+		.hardware_interrupt(hardware_interrupt)
 	);
 	
 	initial begin
 		clock = 0;
+		hardware_interrupt = 0;
 		forever #10 clock = ~clock;
 	end
 

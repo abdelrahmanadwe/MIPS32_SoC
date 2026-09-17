@@ -15,8 +15,13 @@ module ControlUnit(
     output hi_write,      // Write enable for HI register
     output lo_write,      // Write enable for LO register
     output [1:0] HILOSrc, // Select HI/LO source: 00=mul, 01=div, 10=rs
+    output cp0_write,     // Write enable for CP0 register (mtc0)
+    output is_syscall,    // System call exception flag
+    output is_break,      // Breakpoint exception flag
+    output is_undefined,  // Undefined instruction exception flag
 	input [5:0] opcode,      // Opcode field from the instruction
-    input [5:0] funct        // Function field from the instruction (for R-type)
+    input [5:0] funct,       // Function field from the instruction (for R-type)
+    input [4:0] rs           // rs field for CP0 instructions
 );
 
     wire [3:0] ALUOp;  // ALU operation (expanded to 4 bits)
@@ -37,8 +42,13 @@ module ControlUnit(
 		.hi_write(hi_write),
 		.lo_write(lo_write),
 		.HILOSrc(HILOSrc),
+		.cp0_write(cp0_write),
+		.is_syscall(is_syscall),
+		.is_break(is_break),
+		.is_undefined(is_undefined),
 		.opcode(opcode),
-		.funct(funct)
+		.funct(funct),
+		.rs(rs)
 	);
 
     // Instantiate ALU Decoder

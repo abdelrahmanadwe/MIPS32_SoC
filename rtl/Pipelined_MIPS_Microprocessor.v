@@ -13,7 +13,8 @@ module Pipelined_MIPS_Microprocessor #(
 )(
     output [15:0] TestValue,
     input         reset,
-    input         clock
+    input         clock,
+    input         hardware_interrupt
 );
 
     // =========================================================================
@@ -35,6 +36,49 @@ module Pipelined_MIPS_Microprocessor #(
     wire [31:0] PCF;
     wire [31:0] PCPlus4F;
 
+    // =========================================================================
+    // Exception & Interrupt Logic Wires
+    // =========================================================================
+    wire exception_active;
+    wire [31:0] exception_cause;
+    wire [31:0] exception_epc;
+
+    // Hardware Interrupt Synchronizer & Pipeline Drain Logic
+    reg hw_int_sync_0, hw_int_sync_1;
+    reg hw_int_pending;
+    reg [2:0] hw_int_drain_timer;
+    reg [31:0] hw_int_return_pc;
+    reg hw_int_trigger;
+
+    always @(posedge clock or negedge reset) begin
+        if (!reset) begin
+            hw_int_sync_0      <= 1'b0;
+            hw_int_sync_1      <= 1'b0;
+            hw_int_pending     <= 1'b0;
+            hw_int_drain_timer <= 3'd0;
+            hw_int_return_pc   <= 32'b0;
+            hw_int_trigger     <= 1'b0;
+        end else begin
+            hw_int_sync_0 <= hardware_interrupt;
+            hw_int_sync_1 <= hw_int_sync_0;
+
+            if (hw_int_sync_0 && !hw_int_sync_1 && !hw_int_pending && !hw_int_trigger) begin
+                hw_int_pending     <= 1'b1;
+                hw_int_drain_timer <= 3'd4;
+                hw_int_return_pc   <= PCF;
+            end else if (hw_int_pending) begin
+                if (hw_int_drain_timer > 3'd1) begin
+                    hw_int_drain_timer <= hw_int_drain_timer - 3'd1;
+                end else begin
+                    hw_int_pending <= 1'b0;
+                    hw_int_trigger <= 1'b1;
+                end
+            end else begin
+                hw_int_trigger <= 1'b0;
+            end
+        end
+    end
+
     // Mux 1: Select between PC+4 and predicted branch target (Slide 5)
     wire [31:0] Mux1Out = branch_pred_sel ? branch_pred_target : PCPlus4F;
 
@@ -45,7 +89,8 @@ module Pipelined_MIPS_Microprocessor #(
     wire [31:0] PCNext = jr_sel ? rs_for_branch : Mux2Out;
 
     // Stall logic freezes PC register
-    wire [31:0] PCInput = StallF ? PCF : PCNext;
+    wire [31:0] PCInput = exception_active ? 32'h0000_8180 :
+                          (StallF || hw_int_pending) ? PCF : PCNext;
 
     ProgramCounter pc (
         .ProgramCounterOut(PCF),
@@ -70,7 +115,7 @@ module Pipelined_MIPS_Microprocessor #(
     );
 
     // -------------------------------------------------------------------------
-    // IF / ID Pipeline Register (with clr on mispred / flush)
+    // IF / ID Pipeline Register
     // -------------------------------------------------------------------------
     wire [31:0] PCD, PCPlus4D, InstrD;
 
@@ -78,7 +123,7 @@ module Pipelined_MIPS_Microprocessor #(
         .clock(clock),
         .reset(reset),
         .en(!StallD),
-        .flush(FlushD),
+        .flush(FlushD || exception_active || hw_int_pending),
         .PCF(PCF),
         .PCPlus4F(PCPlus4F),
         .InstrF(InstrF),
@@ -95,6 +140,8 @@ module Pipelined_MIPS_Microprocessor #(
     wire [3:0] ALUControlD;
     wire       ALUSrcD, RegWriteD, MemWriteD, BranchD, BneD;
     wire       is_signedD, MemUnsignedD, hi_writeD, lo_writeD;
+
+    wire       cp0_writeD, is_syscallD, is_breakD, is_undefinedD;
 
     ControlUnit controlunit (
         .RegDst(RegDstD),       
@@ -113,14 +160,20 @@ module Pipelined_MIPS_Microprocessor #(
         .hi_write(hi_writeD),
         .lo_write(lo_writeD),
         .HILOSrc(HILOSrcD),
+        .cp0_write(cp0_writeD),
+        .is_syscall(is_syscallD),
+        .is_break(is_breakD),
+        .is_undefined(is_undefinedD),
         .opcode(InstrD[31:26]),      
-        .funct(InstrD[5:0])    
+        .funct(InstrD[5:0]),
+        .rs(InstrD[25:21])
     );
 
     wire [31:0] ReadData1D_raw, ReadData2D_raw;
     wire [31:0] ResultW;
     wire [4:0]  WriteRegW;
     wire        RegWriteW;
+    wire [2:0]  MemToRegW;
 
     RegisterFile registers (
         .ReadData1(ReadData1D_raw),
@@ -131,16 +184,24 @@ module Pipelined_MIPS_Microprocessor #(
         .Address1Read(InstrD[25:21]), 
         .Address2Read(InstrD[20:16]), 
         .Address3Write(WriteRegW),
-        .WriteData(ResultW)  
+        .WriteData(ResultW),
+        .is_mfc0(MemToRegW == 3'b101)
     );
 
     // Register File Internal Forwarding (WB stage bypass to ID stage)
-    wire [31:0] ReadData1D = (RegWriteW && (WriteRegW != 5'b0) && (WriteRegW == InstrD[25:21])) ? ResultW : ReadData1D_raw;
-    wire [31:0] ReadData2D = (RegWriteW && (WriteRegW != 5'b0) && (WriteRegW == InstrD[20:16])) ? ResultW : ReadData2D_raw;
+    wire is_mfc0_epc_W = (MemToRegW == 3'b101) && (WriteRegW == 5'd14);
+    wire is_forward_mfc0_1 = RegWriteW && is_mfc0_epc_W && (InstrD[25:21] == 5'd30 || InstrD[25:21] == 5'd26);
+    wire is_forward_mfc0_2 = RegWriteW && is_mfc0_epc_W && (InstrD[20:16] == 5'd30 || InstrD[20:16] == 5'd26);
+    wire [31:0] ReadData1D = (RegWriteW && (WriteRegW != 5'b0) && (WriteRegW == InstrD[25:21])) ? ResultW : (is_forward_mfc0_1 ? ResultW : ReadData1D_raw);
+    wire [31:0] ReadData2D = (RegWriteW && (WriteRegW != 5'b0) && (WriteRegW == InstrD[20:16])) ? ResultW : (is_forward_mfc0_2 ? ResultW : ReadData2D_raw);
 
     // ID Forwarding for Branch Comparison (forwarding from MEM stage)
     wire [31:0] ALUOutM;
-    assign rs_for_branch = ForwardAD ? ALUOutM : ReadData1D;
+    wire [4:0]  WriteRegM;
+    wire [2:0]  MemToRegM;
+    wire is_mfc0_epc_M = (MemToRegM == 3'b101) && (WriteRegM == 5'd14);
+    wire forward_mfc0_jr = is_mfc0_epc_M && (InstrD[25:21] == 5'd30 || InstrD[25:21] == 5'd26 || InstrD[25:21] == 5'd14);
+    assign rs_for_branch = (ForwardAD || forward_mfc0_jr) ? ALUOutM : ReadData1D;
     wire [31:0] rt_for_branch = ForwardBD ? ALUOutM : ReadData2D;
 
     // Early Branch Comparison Unit in ID Stage (Slide 5)
@@ -218,10 +279,20 @@ module Pipelined_MIPS_Microprocessor #(
         .mispred_sel(mispred_sel)
     );
 
+    // ID Stage Exception Detection
+    wire id_exception = (is_syscallD || is_breakD || is_undefinedD) && (InstrD != 32'b0) && !StallD && !FlushD && !mispred_sel;
+    wire [31:0] id_cause = is_syscallD ? 32'h0000_0020 :
+                           is_breakD   ? 32'h0000_0024 :
+                                         32'h0000_0028; // is_undefinedD
+    wire [31:0] id_epc = PCPlus4D;
+
+    wire RegWriteD_eff = RegWriteD && !id_exception;
+    wire MemWriteD_eff = MemWriteD && !id_exception;
+
     // -------------------------------------------------------------------------
     // ID / EX Pipeline Register
     // -------------------------------------------------------------------------
-    wire        RegWriteE, MemWriteE, BranchE, ALUSrcE, is_signedE, MemUnsignedE, hi_writeE, lo_writeE;
+    wire        RegWriteE, MemWriteE, BranchE, ALUSrcE, is_signedE, MemUnsignedE, hi_writeE, lo_writeE, cp0_writeE;
     wire [1:0]  RegDstE, JumpE, MemSizeE, HILOSrcE;
     wire [2:0]  MemToRegE;
     wire [3:0]  ALUControlE;
@@ -231,7 +302,7 @@ module Pipelined_MIPS_Microprocessor #(
     ID_EX_reg id_ex_inst (
         .clock(clock),
         .reset(reset),
-        .flush(FlushE),
+        .flush(FlushE || exception_active),
 
         .RegWriteD(RegWriteD),
         .MemToRegD(MemToRegD),
@@ -247,6 +318,7 @@ module Pipelined_MIPS_Microprocessor #(
         .hi_writeD(hi_writeD),
         .lo_writeD(lo_writeD),
         .HILOSrcD(HILOSrcD),
+        .cp0_writeD(cp0_writeD),
 
         .ReadData1D(ReadData1D),
         .ReadData2D(ReadData2D),
@@ -273,6 +345,7 @@ module Pipelined_MIPS_Microprocessor #(
         .hi_writeE(hi_writeE),
         .lo_writeE(lo_writeE),
         .HILOSrcE(HILOSrcE),
+        .cp0_writeE(cp0_writeE),
 
         .ReadData1E(ReadData1E),
         .ReadData2E(ReadData2E),
@@ -314,18 +387,47 @@ module Pipelined_MIPS_Microprocessor #(
 
     // ALU 32-bit Execution
     wire [63:0] ALUResult64E;
-    wire zeroE, overflowE;
+    wire zeroE, overflowE, divide_by_zeroE;
 
     ALU_32_bits ALU (
         .ALUResult(ALUResult64E),
         .Zero(zeroE),
         .Overflow(overflowE),
+        .divide_by_zero(divide_by_zeroE),
         .SrcA(SrcAE_forwarded),
         .SrcB(SrcBE_final),
         .ALUControl(ALUControlE),
         .is_signed(is_signedE),
         .shamt(shamtE)
     );
+
+    // EX Stage Exception Detection
+    wire is_overflow_instruction = (InstrE[31:26] == 6'b001000) || // addi
+                                  (InstrE[31:26] == 6'b000000 && (InstrE[5:0] == 6'b100000 || InstrE[5:0] == 6'b100010)); // add, sub
+    wire overflow_exception = overflowE && is_overflow_instruction;
+
+    wire is_div_instruction = (InstrE[31:26] == 6'b000000) && (InstrE[5:0] == 6'b011010 || InstrE[5:0] == 6'b011011); // div, divu
+    wire divide_by_zero_exception = divide_by_zeroE && is_div_instruction;
+
+    wire ex_exception = (divide_by_zero_exception || overflow_exception) && (InstrE != 32'b0);
+    wire [31:0] ex_cause = divide_by_zero_exception ? 32'h0000_0024 : 32'h0000_0030;
+    wire [31:0] ex_epc = PCPlus4E;
+
+    // Combined Exception Arbitration
+    assign exception_active = ex_exception || id_exception || hw_int_trigger;
+    assign exception_cause  = ex_exception ? ex_cause :
+                              id_exception ? id_cause :
+                                             32'h0000_0000;
+    assign exception_epc    = ex_exception ? ex_epc :
+                              id_exception ? id_epc :
+                                             hw_int_return_pc;
+
+    // Suppress side effects of faulting instruction
+    wire RegWriteE_eff  = RegWriteE  && !ex_exception;
+    wire MemWriteE_eff  = MemWriteE  && !ex_exception;
+    wire hi_writeE_eff  = hi_writeE  && !ex_exception;
+    wire lo_writeE_eff  = lo_writeE  && !ex_exception;
+    wire cp0_writeE_eff = cp0_writeE && !ex_exception;
 
     // HI / LO Register handling
     wire [31:0] mul_product_hi = ALUResult64E[63:32];
@@ -347,10 +449,29 @@ module Pipelined_MIPS_Microprocessor #(
         .LO(LO),
         .hi_in(hi_in_E),
         .lo_in(lo_in_E),
-        .hi_write(hi_writeE),
-        .lo_write(lo_writeE),
+        .hi_write(hi_writeE_eff),
+        .lo_write(lo_writeE_eff),
         .clock(clock),
         .reset(reset)
+    );
+
+    // Coprocessor 0 Instance
+    wire [31:0] cp0_read_dataE;
+    wire [31:0] Cause_out, EPC_out;
+
+    Coprocessor0 cp0_inst (
+        .clock(clock),
+        .reset(reset),
+        .reg_addr(RdE),
+        .alt_cause(InstrE[15:8] == 8'h0D),
+        .cp0_write_en(cp0_writeE_eff),
+        .cp0_write_data(WriteDataE_forwarded),
+        .cp0_read_data(cp0_read_dataE),
+        .exception_trigger(exception_active),
+        .exception_cause(exception_cause),
+        .exception_epc(exception_epc),
+        .Cause_out(Cause_out),
+        .EPC_out(EPC_out)
     );
 
     // Merge ALU result, HI, LO, and PCPlus4 for unified datapath
@@ -360,6 +481,7 @@ module Pipelined_MIPS_Microprocessor #(
             3'b010:  ALUOutFinalE = PCPlus4E;          // jal, jalr
             3'b011:  ALUOutFinalE = HI;                // mfhi
             3'b100:  ALUOutFinalE = LO;                // mflo
+            3'b101:  ALUOutFinalE = cp0_read_dataE;    // mfc0
             default: ALUOutFinalE = ALUResult64E[31:0]; // Standard ALU / mul / shift
         endcase
     end
@@ -374,17 +496,15 @@ module Pipelined_MIPS_Microprocessor #(
     // -------------------------------------------------------------------------
     wire        RegWriteM, MemWriteM, MemUnsignedM;
     wire [1:0]  MemSizeM;
-    wire [2:0]  MemToRegM;
     wire [31:0] WriteDataM, PCPlus4M, PCM;
-    wire [4:0]  WriteRegM;
 
     EX_MEM_reg ex_mem_inst (
         .clock(clock),
         .reset(reset),
 
-        .RegWriteE(RegWriteE),
+        .RegWriteE(RegWriteE_eff),
         .MemToRegE(MemToRegE),
-        .MemWriteE(MemWriteE),
+        .MemWriteE(MemWriteE_eff),
         .MemSizeE(MemSizeE),
         .MemUnsignedE(MemUnsignedE),
 
@@ -430,7 +550,6 @@ module Pipelined_MIPS_Microprocessor #(
     // -------------------------------------------------------------------------
     // MEM / WB Pipeline Register
     // -------------------------------------------------------------------------
-    wire [2:0]  MemToRegW;
     wire [31:0] ALUOutW, ReadDataW, PCPlus4W, PCW;
 
     MEM_WB_reg mem_wb_inst (
