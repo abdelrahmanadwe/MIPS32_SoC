@@ -286,9 +286,6 @@ module Pipelined_MIPS_Microprocessor #(
                                          32'h0000_0028; // is_undefinedD
     wire [31:0] id_epc = PCPlus4D;
 
-    wire RegWriteD_eff = RegWriteD && !id_exception;
-    wire MemWriteD_eff = MemWriteD && !id_exception;
-
     // -------------------------------------------------------------------------
     // ID / EX Pipeline Register
     // -------------------------------------------------------------------------
