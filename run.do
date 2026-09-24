@@ -29,6 +29,8 @@ if {$test_name == "test1"} {
     set mem_file "Tests/test9/Test9_Soc.mem"
 } elseif {$test_name == "test10"} {
     set mem_file "Tests/test10/Test10_MemOps.mem"
+} elseif {$test_name == "test11"} {
+    set mem_file "Tests/test11/Test11_Soc_All.mem"
 } elseif {$test_name == "instructions1"} {
     set mem_file "Tests/instructions1/instructions1.mem"
 } else {
@@ -38,8 +40,8 @@ if {$test_name == "test1"} {
 
 echo "Running test: $test_name using $mem_file"
 
-# Compile the design
-vlog rtl/*.v rtl/*.sv tb/*.v
+# Compile the design (compile UART package and SystemVerilog files first)
+vlog -sv rtl/periph/uart/common/uart_defs.sv rtl/periph/uart/common/baud_generator.sv rtl/periph/uart/rx/*.sv rtl/periph/uart/tx/*.sv rtl/periph/uart/uart_reg_file.sv rtl/periph/uart/uart_top.sv rtl/periph/uart/UART.sv rtl/mips/*.v rtl/mips/*.sv rtl/ram/*.v rtl/periph/*.v rtl/periph/gpio/*.v rtl/bus/*.v rtl/*.v tb/*.v
 
 set top_tb "Pipelined_MIPS_Microprocessor_tb"
 if {$argc >= 2} {
