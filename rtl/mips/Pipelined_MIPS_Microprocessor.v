@@ -7,14 +7,22 @@
 
 module Pipelined_MIPS_Microprocessor #(
     parameter IM_START_ADDR = 32'h0000_0000,
-    parameter IM_END_ADDR   = 32'h0000_0FFF,
-    parameter DM_START_ADDR = 32'h0000_1000,
-    parameter DM_END_ADDR   = 32'h0000_7FFF
+    parameter IM_END_ADDR   = 32'h0000_0FFF
 )(
-    output [15:0] TestValue,
-    input         reset,
-    input         clock,
-    input         hardware_interrupt
+    input  wire        reset,
+    input  wire        clock,
+    input  wire        hardware_interrupt,
+
+    // Memory stage outputs (to AHB Decoder)
+    output wire [31:0] MemAddrM,
+    output wire [31:0] MemWriteDataM,
+    output wire        MemWriteM_out,
+    output wire        MemReadM_out,
+    output wire [1:0]  MemSizeM_out,
+    output wire        MemUnsignedM_out,
+
+    // Memory read data from Slave MUX (into WB stage)
+    input  wire [31:0] MemReadDataW
 );
 
     // =========================================================================
@@ -527,22 +535,13 @@ module Pipelined_MIPS_Microprocessor #(
     // =========================================================================
     // Stage 4: Memory Access (MEM)
     // =========================================================================
-    wire [31:0] ReadDataM;
-
-    Data_Memory #(
-        .START_ADDR(DM_START_ADDR),
-        .END_ADDR(DM_END_ADDR)
-    ) RAM (
-        .ReadData(ReadDataM),     
-        .TestValue(TestValue),    
-        .Clock(clock),
-        .Reset(reset),
-        .Address(ALUOutM),      
-        .WriteData(WriteDataM),    
-        .WriteEnable(MemWriteM),
-        .MemSize(MemSizeM),
-        .MemUnsigned(MemUnsignedM)
-    );
+    // External Memory Interface Signals (sent to AHB Decoder)
+    assign MemAddrM         = ALUOutM;
+    assign MemWriteDataM    = WriteDataM;
+    assign MemWriteM_out    = MemWriteM;
+    assign MemReadM_out     = (MemToRegM == 3'b001);
+    assign MemSizeM_out     = MemSizeM;
+    assign MemUnsignedM_out = MemUnsignedM;
 
     // -------------------------------------------------------------------------
     // MEM / WB Pipeline Register
@@ -557,7 +556,7 @@ module Pipelined_MIPS_Microprocessor #(
         .MemToRegM(MemToRegM),
 
         .ALUOutM(ALUOutM),
-        .ReadDataM(ReadDataM),
+        .ReadDataM(32'b0),
         .WriteRegM(WriteRegM),
         .PCPlus4M(PCPlus4M),
         .PCM(PCM),
@@ -575,7 +574,7 @@ module Pipelined_MIPS_Microprocessor #(
     // =========================================================================
     // Stage 5: Writeback (WB)
     // =========================================================================
-    assign ResultW = (MemToRegW == 3'b001) ? ReadDataW : ALUOutW;
+    assign ResultW = (MemToRegW == 3'b001) ? MemReadDataW : ALUOutW;
 
     // =========================================================================
     // Hazard Detection & Forwarding Unit

@@ -203,7 +203,7 @@ module Single_Cycle_MIPS_Microprocessor #(
 		.rs(instruction[25:21])
 	);
 	
-	Data_Memory #(
+	Single_Cycle_Data_Memory #(
 		.START_ADDR(DM_START_ADDR),
 		.END_ADDR(DM_END_ADDR)
 	) RAM(
